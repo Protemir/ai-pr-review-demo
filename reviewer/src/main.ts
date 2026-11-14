@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { runAnalyzers } from './analyzers.ts';
 import { isIgnored, loadConfig, type Config } from './config.ts';
 import { fileAtHead, getDiff } from './diff.ts';
-import { commentBody, GitHub, SUMMARY_MARK } from './github.ts';
+import { alreadyThere, commentBody, GitHub, SUMMARY_MARK } from './github.ts';
 import { runLlm } from './llm.ts';
 import { fingerprint, fitIndent, mergeFindings, suggestionFits, type MergeStats } from './merge.ts';
 import { CLASS_LABEL, CLASSES, SEVERITIES, SEVERITY_LABEL, type AnalyzerRun, type Finding, type LlmRun } from './types.ts';
@@ -127,16 +127,16 @@ export async function review(o: ReviewOptions, env: NodeJS.ProcessEnv = process.
   if (!o.dryRun && o.repo && o.pr) {
     const token = env.GITHUB_TOKEN ?? '';
     const gh = new GitHub(o.repo, token);
-    const { published, falsePositive } = await gh.existing(o.pr);
-    const fresh = findings.filter((f) => !f.summaryOnly && !published.has(f.fingerprint!) && !falsePositive.has(f.fingerprint!));
+    const existing = await gh.existing(o.pr);
+    const fresh = findings.filter((f) => !f.summaryOnly && !alreadyThere(f, existing));
     const toPost = fresh.slice(0, cfg.maxComments);
     const res = await gh.postReview(o.pr, o.head, toPost.map((f) => ({
       path: f.path, line: f.endLine ?? f.line, start_line: f.endLine ? f.line : undefined, body: commentBody(f),
     })));
     report.published = {
       ...report.published, newComments: res.posted, failed: res.failed,
-      alreadyPublished: findings.filter((f) => published.has(f.fingerprint!)).length,
-      falsePositiveMarked: falsePositive.size,
+      alreadyPublished: findings.filter((f) => alreadyThere(f, existing)).length,
+      falsePositiveMarked: existing.filter((c) => c.falsePositive).length,
     };
     report.durationMs = Date.now() - t0;
     await gh.upsertSummary(o.pr, summaryMarkdown(report, cfg, o.label ?? ''));

@@ -7,7 +7,7 @@ import { mergeFindings, fingerprint, fitIndent, isPlaceholder, suggestionFits } 
 import { extractDeps, mapGitleaks, mapRuff, mapSemgrep, testsHeuristics } from '../src/analyzers.ts';
 import { newFunctions, parseLlmJson, readSse, renderFile, runLlm } from '../src/llm.ts';
 import { createServer } from 'node:http';
-import { commentBody, FP_MARK } from '../src/github.ts';
+import { alreadyThere, commentBody, FP_MARK } from '../src/github.ts';
 import { shouldReview, verifySignature } from '../src/server.ts';
 import type { Finding } from '../src/types.ts';
 
@@ -226,4 +226,11 @@ test('runLlm: OpenAI-совместимый сервер со стриминго
   assert.equal(r.raw.length, 1);
   assert.equal(r.promptTokens, 100);
   assert.ok(Math.abs(r.costUsd - 0.00014) < 1e-9);
+});
+
+test('alreadyThere: то же замечание на соседней строке не публикуется повторно', () => {
+  const f: Finding = { id: '1', path: 'a.ts', line: 43, cls: 'security', severity: 'high', title: 'XSS', explanation: '', sources: [], ruleIds: [], fingerprint: 'new' };
+  assert.ok(alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 44, group: 'security', falsePositive: false }]));
+  assert.ok(!alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 44, group: 'logic', falsePositive: false }]));
+  assert.ok(!alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 50, group: 'security', falsePositive: false }]));
 });

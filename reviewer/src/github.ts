@@ -1,6 +1,15 @@
 import { CLASS_LABEL, SEVERITY_LABEL, type Finding } from './types.ts';
 
-export const FP_MARK = /<!-- ai-review:fp=([0-9a-f]+) -->/;
+export const FP_MARK = /<!-- ai-review:fp=([0-9a-f]+)(?:;g=([a-z]+))? -->/;
+
+export interface PublishedComment { fp: string; path: string; line: number; group?: string; falsePositive: boolean }
+
+/** Уже есть такое замечание: тот же отпечаток или тот же файл и группа класса в пределах ±3 строк. */
+export function alreadyThere(f: Finding, list: PublishedComment[], onlyFalse = false): boolean {
+  const g = f.cls === 'secrets' ? 'security' : f.cls;
+  return list.some((c) => (!onlyFalse || c.falsePositive) &&
+    (c.fp === f.fingerprint || (c.path === f.path && c.group === g && Math.abs(c.line - f.line) <= 3)));
+}
 export const SUMMARY_MARK = '<!-- ai-review:summary -->';
 
 export class GitHub {
@@ -49,16 +58,17 @@ export class GitHub {
   }
 
   /** Уже опубликованные замечания и те, что люди отметили 👎 как ложные. */
-  async existing(n: number): Promise<{ published: Set<string>; falsePositive: Set<string> }> {
-    const published = new Set<string>();
-    const falsePositive = new Set<string>();
+  async existing(n: number): Promise<PublishedComment[]> {
+    const out: PublishedComment[] = [];
     for (const c of await this.paginate(`/pulls/${n}/comments`)) {
       const m = FP_MARK.exec(c.body ?? '');
       if (!m) continue;
-      published.add(m[1]);
-      if ((c.reactions?.['-1'] ?? 0) > 0) falsePositive.add(m[1]);
+      // Старые комментарии без g=: группа по подписи класса в первой строке.
+      const label = Object.entries(CLASS_LABEL).find(([, l]) => String(c.body).split('\n')[0].includes(`· ${l}`))?.[0];
+      const group = m[2] ?? (label === 'secrets' ? 'security' : label);
+      out.push({ fp: m[1], group, path: c.path, line: c.line ?? c.original_line ?? 0, falsePositive: (c.reactions?.['-1'] ?? 0) > 0 });
     }
-    return { published, falsePositive };
+    return out;
   }
 
   async postReview(n: number, commitId: string, comments: { path: string; line: number; start_line?: number; body: string }[]) {
@@ -106,6 +116,6 @@ export function commentBody(f: Finding): string {
   const src = f.sources.map((s) => s.replace(/^llm:/, 'LLM ')).join(', ');
   const rules = f.ruleIds.length ? ` · ${f.ruleIds.slice(0, 3).join(', ')}` : '';
   const conf = typeof f.confidence === 'number' ? ` · уверенность ${f.confidence.toFixed(2)}` : '';
-  parts.push('', `<sub>Источник: ${src}${rules}${conf} · ложное замечание — поставьте 👎</sub>`, `<!-- ai-review:fp=${f.fingerprint} -->`);
+  parts.push('', `<sub>Источник: ${src}${rules}${conf} · ложное замечание — поставьте 👎</sub>`, `<!-- ai-review:fp=${f.fingerprint};g=${f.cls === 'secrets' ? 'security' : f.cls} -->`);
   return parts.join('\n');
 }
