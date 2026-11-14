@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { parseDiff, snapToAdded } from '../src/diff.ts';
 import { DEFAULT_CONFIG, globToRegex, isIgnored } from '../src/config.ts';
-import { mergeFindings, fingerprint } from '../src/merge.ts';
+import { mergeFindings, fingerprint, fitIndent } from '../src/merge.ts';
 import { extractDeps, mapGitleaks, mapRuff, mapSemgrep, testsHeuristics } from '../src/analyzers.ts';
 import { parseLlmJson, renderFile } from '../src/llm.ts';
 import { commentBody, FP_MARK } from '../src/github.ts';
@@ -140,4 +140,14 @@ test('webhook: подпись и выбор событий', () => {
   assert.equal(shouldReview('pull_request', { action: 'opened', pull_request: { number: 5 } }), 5);
   assert.equal(shouldReview('issue_comment', { action: 'created', issue: { number: 7, pull_request: {} }, comment: { body: '/ai-review' } }), 7);
   assert.equal(shouldReview('issue_comment', { action: 'created', issue: { number: 7 }, comment: { body: '/ai-review' } }), undefined);
+});
+
+test('fitIndent: возвращает потерянный отступ', () => {
+  assert.equal(fitIndent('data = yaml.safe_load(x)', '    data = yaml.load(x)'), '    data = yaml.safe_load(x)');
+  assert.equal(fitIndent('if a:\n    b()', '        old()'), '        if a:\n            b()');
+});
+
+test('parseLlmJson: fixes превращаются в уточнения замечаний анализаторов', () => {
+  const r = parseLlmJson('{"findings":[],"fixes":[{"static_id":"S2","line":5,"suggestion":"x"}]}');
+  assert.equal(r[0].related_static_id, 'S2');
 });

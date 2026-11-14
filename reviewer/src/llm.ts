@@ -3,24 +3,26 @@ import type { Config } from './config.ts';
 import type { DiffFile } from './diff.ts';
 import type { Finding, LlmRawFinding, LlmRun } from './types.ts';
 
-export const SYSTEM_PROMPT = `Ты — старший инженер и делаешь код-ревью pull request.
-Ищи только реальные проблемы в ДОБАВЛЕННЫХ строках (в листинге они помечены «+»):
-- logic: неверные условия, null/None, граничные случаи, off-by-one, коллекции, даты и часовые пояса;
-- security: внедрение SQL и команд, XSS, небезопасная десериализация, ошибки авторизации, SSRF, path traversal;
-- secrets: ключи, пароли, токены в коде, небезопасные настройки;
-- quality: дублирование, лишняя сложность, производительность (N+1, лишние циклы);
-- tests: изменение логики без тестов, удалённые или отключённые тесты.
-Правила:
-1. Не пиши о форматировании, именовании и вкусовщине. Если не уверен, промолчи. Лучше 3 точных замечания, чем 10 сомнительных.
-2. line — номер строки из листинга (новая версия файла); end_line — последняя строка, если замечание о нескольких строках.
-3. suggestion — готовый код, который ЦЕЛИКОМ заменит строки line..end_line, с теми же отступами и без пояснений. Если исправление не помещается в эти строки, оставь suggestion пустой строкой.
-4. severity: critical — эксплуатируемая уязвимость, утечка секрета, потеря данных; high — ошибка, которая точно сломает поведение; medium — вероятная ошибка или риск; low — улучшение.
-5. confidence — твоя уверенность от 0 до 1.
-6. Ниже есть список замечаний статических анализаторов (id вида S1). Не дублируй их отдельными замечаниями. Если можешь дать к ним исправление или точнее объяснить, верни объект с related_static_id и теми же path/line.
-7. Объяснения пиши по-русски, коротко: что не так и чем грозит.
-Ответ — строго JSON без markdown:
-{"findings":[{"path":"...","line":12,"end_line":12,"class":"logic|security|secrets|quality|tests","severity":"critical|high|medium|low","title":"...","explanation":"...","suggestion":"...","confidence":0.9,"related_static_id":""}]}
-Если проблем нет: {"findings":[]}`;
+export const SYSTEM_PROMPT = `Ты — старший инженер, делаешь код-ревью pull request. Пиши только по-русски.
+Шаблонные уязвимости (SQL-инъекции, секреты, yaml.load, уязвимые версии библиотек) уже нашли статические анализаторы — их список дан в конце листинга.
+Твоя главная задача — то, что анализаторы НЕ видят. Пройди по каждой новой функции (строки с «+») и проверь:
+1) None/null/undefined: что будет, если запись не найдена, пользователь не авторизован, поле пустое;
+2) права доступа: кто может читать, менять, удалять; не перевёрнуто ли условие (and/or, ==/!=, not);
+3) границы: off-by-one в страницах и индексах, округление (floor/ceil), пустые списки;
+4) даты: месяцы с нуля в JS, часовые пояса;
+5) вывод пользовательских данных в HTML без экранирования (XSS), слияние объектов из URL (prototype pollution);
+6) логика без тестов, отключённые или удалённые тесты.
+Не пиши о стиле, именовании и форматировании. Если не уверен — промолчи.
+
+Формат ответа — строго JSON без markdown:
+{"findings":[{"path":"файл","line":12,"end_line":12,"class":"logic|security|secrets|quality|tests","severity":"critical|high|medium|low","title":"коротко по-русски","explanation":"что не так и чем грозит, по-русски","suggestion":"код","confidence":0.9}],
+ "fixes":[{"static_id":"S3","line":57,"suggestion":"код","explanation":"по-русски"}]}
+- findings — только НОВЫЕ проблемы, которых нет в списке анализаторов.
+- fixes — исправления к замечаниям анализаторов (по их id), если можешь их дать.
+- line — номер строки из листинга; end_line — последняя строка, если замечание о нескольких строках.
+- suggestion — готовый код, который целиком заменит строки line..end_line, с теми же отступами; без пояснений. Нельзя исправить в этих строках — "".
+- severity: critical — эксплуатируемая уязвимость или потеря данных; high — точно сломает поведение; medium — вероятная ошибка; low — улучшение.
+Если проблем нет: {"findings":[],"fixes":[]}`;
 
 const estTokens = (s: string) => Math.ceil(s.length / 3.2);
 
@@ -63,7 +65,7 @@ export function buildChunks(files: { file: DiffFile; content: string[] }[], stat
     cur += (cur ? '\n\n' : '') + p;
   }
   if (cur) chunks.push(cur);
-  return chunks.map((c) => `${meta}\n\n${c}`);
+  return chunks.map((c) => `${meta}\n\n${c}\n\nНайди новые проблемы (особенно пункты 1–5) и дай исправления к замечаниям анализаторов. Ответ — JSON, все тексты на русском.`);
 }
 
 export function parseLlmJson(text: string): LlmRawFinding[] {
@@ -73,7 +75,13 @@ export function parseLlmJson(text: string): LlmRawFinding[] {
   if (start < 0 || end < 0) return [];
   const obj = JSON.parse(s.slice(start, end + 1));
   const arr = Array.isArray(obj) ? obj : obj.findings;
-  return Array.isArray(arr) ? arr.filter((x) => x && typeof x === 'object') : [];
+  const out: LlmRawFinding[] = Array.isArray(arr) ? arr.filter((x) => x && typeof x === 'object') : [];
+  for (const f of Array.isArray(obj.fixes) ? obj.fixes : []) {
+    if (f && typeof f === 'object' && f.static_id) {
+      out.push({ related_static_id: String(f.static_id), line: f.line, end_line: f.end_line, suggestion: f.suggestion, explanation: f.explanation, title: f.title });
+    }
+  }
+  return out;
 }
 
 async function chat(cfg: Config['llm'], user: string, env: NodeJS.ProcessEnv) {

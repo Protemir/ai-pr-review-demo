@@ -19,6 +19,15 @@ export function fingerprint(f: Finding, lineText: string): string {
   return createHash('sha1').update(`${f.path}|${group(f.cls)}|${lineText.trim().replace(/\s+/g, ' ')}`).digest('hex').slice(0, 12);
 }
 
+/** Модель часто теряет отступ: выравниваем исправление по первой заменяемой строке. */
+export function fitIndent(suggestion: string, original: string): string {
+  const want = /^\s*/.exec(original)?.[0] ?? '';
+  const lines = suggestion.replace(/\r/g, '').replace(/\n+$/, '').split('\n');
+  const have = /^\s*/.exec(lines[0])?.[0] ?? '';
+  if (have === want) return lines.join('\n');
+  return lines.map((l) => (l.startsWith(have) ? want + l.slice(have.length) : want + l.trimStart())).join('\n');
+}
+
 export function mergeFindings(
   statics: Finding[],
   raw: LlmRawFinding[],
@@ -31,11 +40,20 @@ export function mergeFindings(
   const byId = new Map(all.map((s) => [s.id, s]));
   let n = 0;
   for (const r of raw) {
-    const file = files.find((f) => f.path === r.path);
     const conf = typeof r.confidence === 'number' ? r.confidence : 0.7;
-    const related = r.related_static_id ? byId.get(r.related_static_id) : undefined;
+    let related = r.related_static_id ? byId.get(r.related_static_id) : undefined;
+    // Маленькие модели путают id: принимаем уточнение, только если строка и класс сходятся.
+    if (related && ((r.line && Math.abs(r.line - related.line) > 3) ||
+      (r.class && CLASSES.includes(r.class as FindingClass) && group(r.class as FindingClass) !== group(related.cls)) ||
+      (r.path && r.path !== related.path))) related = undefined;
+    const file = files.find((f) => f.path === (r.path ?? related?.path));
+    if (r.related_static_id && !related && !r.title) {
+      stats.llmDroppedLine++;
+      continue;
+    }
     if (related) {
       // LLM уточняет замечание анализатора: добавляем объяснение и исправление.
+      if (r.title && /[а-яё]/i.test(r.title)) related.title = r.title.slice(0, 140);
       if (r.explanation) related.explanation = `${r.explanation}\n\n_Анализатор: ${related.explanation.split('\n')[0]}_`;
       if (r.suggestion && !related.suggestion && file && r.line && Math.abs(r.line - related.line) <= 3) {
         related.line = r.line;
