@@ -232,5 +232,7 @@ test('alreadyThere: то же замечание на соседней стро�
   const f: Finding = { id: '1', path: 'a.ts', line: 43, cls: 'security', severity: 'high', title: 'XSS', explanation: '', sources: [], ruleIds: [], fingerprint: 'new' };
   assert.ok(alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 44, group: 'security', falsePositive: false }]));
   assert.ok(!alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 44, group: 'logic', falsePositive: false }]));
-  assert.ok(!alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 50, group: 'security', falsePositive: false }]));
+  assert.ok(!alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 56, group: 'security', falsePositive: false }]));
+  assert.ok(alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 50, group: 'security', title: 'XSS в выводе', falsePositive: false }]));
+  assert.ok(!alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 50, group: 'security', title: 'SQL-инъекция', falsePositive: false }]));
 });
