@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { parseDiff, snapToAdded } from '../src/diff.ts';
 import { DEFAULT_CONFIG, globToRegex, isIgnored } from '../src/config.ts';
-import { mergeFindings, fingerprint, fitIndent, isPlaceholder } from '../src/merge.ts';
+import { mergeFindings, fingerprint, fitIndent, isPlaceholder, suggestionFits } from '../src/merge.ts';
 import { extractDeps, mapGitleaks, mapRuff, mapSemgrep, testsHeuristics } from '../src/analyzers.ts';
 import { newFunctions, parseLlmJson, readSse, renderFile } from '../src/llm.ts';
 import { commentBody, FP_MARK } from '../src/github.ts';
@@ -193,4 +193,10 @@ test('merge: совет текстом не становится suggestion; «s
   assert.equal(sql[0].suggestion, undefined);
   // секрет от LLM в той же группе «безопасность» и рядом с SQL — склеивается с ним, отдельного шума нет
   assert.ok(findings.length <= 2);
+});
+
+test('suggestionFits: исправление не должно ломать скобки вокруг', () => {
+  assert.ok(!suggestionFits('db.execute(f"SELECT ? ", (slug,))', ['    rows = get_db().execute(']));
+  assert.ok(suggestionFits('    data = yaml.safe_load(request.data)', ['    data = yaml.load(request.data)']));
+  assert.ok(suggestionFits('x = ")("', ['x = 1']));
 });

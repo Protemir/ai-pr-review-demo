@@ -6,7 +6,7 @@ import { isIgnored, loadConfig, type Config } from './config.ts';
 import { fileAtHead, getDiff } from './diff.ts';
 import { commentBody, GitHub, SUMMARY_MARK } from './github.ts';
 import { runLlm } from './llm.ts';
-import { fingerprint, fitIndent, mergeFindings, type MergeStats } from './merge.ts';
+import { fingerprint, fitIndent, mergeFindings, suggestionFits, type MergeStats } from './merge.ts';
 import { CLASS_LABEL, CLASSES, SEVERITIES, SEVERITY_LABEL, type AnalyzerRun, type Finding, type LlmRun } from './types.ts';
 
 export interface ReviewOptions {
@@ -110,6 +110,7 @@ export async function review(o: ReviewOptions, env: NodeJS.ProcessEnv = process.
     const content = withContent.find((w) => w.file.path === f.path)?.content ?? [];
     f.fingerprint = fingerprint(f, content[f.line - 1] ?? `${f.line}`);
     if (f.suggestion && content[f.line - 1] !== undefined) f.suggestion = fitIndent(f.suggestion, content[f.line - 1]);
+    if (f.suggestion && !suggestionFits(f.suggestion, content.slice(f.line - 1, f.endLine ?? f.line))) f.suggestion = undefined;
     // Исправление, которое ничего не меняет, только шумит.
     if (f.suggestion && f.suggestion.trim() === content.slice(f.line - 1, f.endLine ?? f.line).join('\n').trim()) f.suggestion = undefined;
   }

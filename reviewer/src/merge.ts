@@ -35,6 +35,22 @@ export function looksLikeCode(s: string): boolean {
   return !prose && /[=(){}\[\];:<>"'`]/.test(t);
 }
 
+/** Разница открывающих и закрывающих скобок без учёта строк в кавычках. */
+export function bracketBalance(code: string): number {
+  const s = code.replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '');
+  let b = 0;
+  for (const c of s) {
+    if ('([{'.includes(c)) b++;
+    else if (')]}'.includes(c)) b--;
+  }
+  return b;
+}
+
+/** Исправление должно заменять строки «один к одному» по структуре: иначе оно ломает код вокруг. */
+export function suggestionFits(suggestion: string, originalLines: string[]): boolean {
+  return bracketBalance(suggestion) === bracketBalance(originalLines.join('\n'));
+}
+
 /** Модель часто теряет отступ: выравниваем исправление по первой заменяемой строке. */
 export function fitIndent(suggestion: string, original: string): string {
   const want = /^\s*/.exec(original)?.[0] ?? '';
