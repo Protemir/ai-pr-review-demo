@@ -89,6 +89,10 @@ export function mergeFindings(
       continue;
     }
     let severity: Severity = SEVERITIES.includes(r.severity as Severity) ? (r.severity as Severity) : 'medium';
+    if (SEVERITY_ORDER[severity] < SEVERITY_ORDER[cfg.llm.minSeverity ?? 'low']) {
+      stats.llmDroppedConfidence++;
+      continue;
+    }
     if (severity === 'critical' && conf < cfg.llm.criticalMinConfidence) {
       severity = 'high';
       stats.llmDowngraded++;

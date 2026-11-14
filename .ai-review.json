@@ -6,12 +6,13 @@
     "apiKeyEnv": "LLM_API_KEY",
     "temperature": 0.1,
     "maxInputTokensPerCall": 5000,
-    "maxOutputTokens": 1500,
+    "maxOutputTokens": 1000,
     "timeoutSec": 600,
     "pricePer1MInput": 0,
     "pricePer1MOutput": 0,
     "minConfidence": 0.6,
-    "criticalMinConfidence": 0.85
+    "criticalMinConfidence": 0.85,
+    "minSeverity": "medium"
   },
   "analyzers": {
     "semgrep": {

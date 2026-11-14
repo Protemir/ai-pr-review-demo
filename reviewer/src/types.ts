@@ -68,5 +68,6 @@ export interface LlmRun {
   costUsd: number;
   ms: number;
   raw: LlmRawFinding[];
+  rawText?: string[];
   error?: string;
 }

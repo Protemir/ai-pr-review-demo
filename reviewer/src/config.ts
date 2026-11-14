@@ -15,6 +15,8 @@ export interface Config {
     pricePer1MInput: number;
     pricePer1MOutput: number;
     minConfidence: number;
+    /** замечания только от LLM ниже этого уровня не публикуются */
+    minSeverity: Severity;
     criticalMinConfidence: number;
     mockFile?: string;
     extraInstructions?: string;
@@ -47,6 +49,7 @@ export const DEFAULT_CONFIG: Config = {
     pricePer1MInput: 0,
     pricePer1MOutput: 0,
     minConfidence: 0.6,
+    minSeverity: 'medium',
     criticalMinConfidence: 0.85,
   },
   analyzers: {
