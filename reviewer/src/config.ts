@@ -9,6 +9,7 @@ export interface Config {
     baseUrl: string;
     apiKeyEnv: string;
     temperature: number;
+    timeoutSec: number;
     maxOutputTokens: number;
     maxInputTokensPerCall: number;
     pricePer1MInput: number;
@@ -34,15 +35,17 @@ export interface Config {
 
 export const DEFAULT_CONFIG: Config = {
   llm: {
-    provider: 'github-models',
-    model: 'openai/gpt-4.1',
-    baseUrl: 'https://models.github.ai/inference',
-    apiKeyEnv: 'GITHUB_TOKEN',
+    // По умолчанию — локальная модель (код не уходит наружу). Облако: любой OpenAI-совместимый API + ключ в секрете CI.
+    provider: 'openai-compatible',
+    model: 'qwen2.5-coder:7b',
+    baseUrl: 'http://localhost:11434/v1',
+    apiKeyEnv: 'LLM_API_KEY',
     temperature: 0.1,
-    maxOutputTokens: 3000,
-    maxInputTokensPerCall: 6500,
-    pricePer1MInput: 2.0,
-    pricePer1MOutput: 8.0,
+    timeoutSec: 300,
+    maxOutputTokens: 1500,
+    maxInputTokensPerCall: 5000,
+    pricePer1MInput: 0,
+    pricePer1MOutput: 0,
     minConfidence: 0.6,
     criticalMinConfidence: 0.85,
   },

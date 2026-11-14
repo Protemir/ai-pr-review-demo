@@ -175,6 +175,7 @@ async function cli() {
     appendFileSync(env.GITHUB_STEP_SUMMARY, md + '\n' + table.join('\n') + '\n');
   }
   console.log(md);
+  console.log('analyzers:', JSON.stringify(report.analyzers));
   for (const f of report.findings) console.log(`${f.severity.padEnd(8)} ${f.cls.padEnd(8)} ${f.path}:${f.line}  ${f.title}  [${f.sources.join(', ')}]`);
 }
 

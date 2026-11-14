@@ -12,7 +12,6 @@ permissions:
   pull-requests: write
   issues: write
   statuses: write
-  models: read
 
 concurrency:
   group: ai-review-${{ github.event.pull_request.number || github.event.issue.number }}
@@ -46,6 +45,16 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Локальная LLM (Ollama на CPU раннера, код наружу не уходит)
+        run: |
+          MODEL=$(jq -r '.llm.model' .ai-review.json)
+          curl -fsSL https://ollama.com/install.sh | sh >/dev/null 2>&1
+          sudo systemctl stop ollama || true
+          OLLAMA_CONTEXT_LENGTH=8192 OLLAMA_KEEP_ALIVE=30m nohup ollama serve > "$RUNNER_TEMP/ollama.log" 2>&1 &
+          for i in $(seq 1 30); do curl -sf http://localhost:11434/api/version >/dev/null && break; sleep 1; done
+          ollama pull "$MODEL" >/dev/null 2>&1
+          ollama list
 
       - name: Анализаторы (Semgrep, Ruff, Gitleaks)
         run: |

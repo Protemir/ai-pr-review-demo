@@ -101,7 +101,9 @@ async function semgrep(ctx: AnalyzerContext) {
   for (const c of ctx.config.analyzers.semgrep.configs) args.push('--config', c);
   const r = await run('semgrep', [...args, ...targets], ctx.repoDir);
   if (r.missing) return { findings: [], status: 'skipped' as const, note: 'semgrep не установлен' };
-  const json = JSON.parse(r.stdout || '{}');
+  if (!r.stdout.trim()) throw new Error(`semgrep код ${r.code}: ${r.stderr.slice(-400)}`);
+  const json = JSON.parse(r.stdout);
+  if (json.errors?.length) console.error('semgrep errors:', JSON.stringify(json.errors).slice(0, 800));
   return { findings: mapSemgrep(json, ctx.files, ctx.config.disabledRules), note: `${json?.results?.length ?? 0} результатов до фильтра по diff` };
 }
 
@@ -157,7 +159,7 @@ export function mapGitleaks(json: any[], files: DiffFile[]): Finding[] {
     seen.add(key);
     out.push({
       id: nextId(), path, line: line ?? r.StartLine, cls: 'secrets', severity: 'critical',
-      title: `Секрет в коде: ${r.Description ?? r.RuleID}`,
+      title: `Секрет в коде (${r.RuleID})`,
       explanation: `Gitleaks (правило \`${r.RuleID}\`) нашёл значение, похожее на секрет. Значение в отчёте скрыто. ` +
         'Уберите его из кода, перенесите в секреты CI или переменные окружения и отзовите ключ: он уже попал в историю git.',
       sources: ['gitleaks'], ruleIds: [`gitleaks:${r.RuleID}`], summaryOnly: line === undefined,
@@ -260,7 +262,7 @@ const SEV_RANK: Record<Severity, number> = { critical: 4, high: 3, medium: 2, lo
 
 // ---------- Тесты ----------
 const SKIP_RE = /(@pytest\.mark\.skip|pytest\.skip\(|\b(it|test|describe)\.skip\(|\bx(it|describe)\(|@Disabled\b|@Ignore\b|unittest\.skip)/;
-const TEST_DEF_RE = /^\s*(def test_\w+|(it|test)\(\s*['"`]|@Test\b)/;
+const TEST_DEF_RE = /^\s*(def test_\w+|(it|test)(\.(skip|only|todo))?\(\s*['"`]|@Test\b)/;
 
 export function testsHeuristics(files: DiffFile[], minChanged: number): Finding[] {
   const out: Finding[] = [];

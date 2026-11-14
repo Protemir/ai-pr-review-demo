@@ -1,25 +1,55 @@
 {
   "llm": {
-    "provider": "github-models",
-    "model": "openai/gpt-4.1",
-    "baseUrl": "https://models.github.ai/inference",
-    "apiKeyEnv": "GITHUB_TOKEN",
+    "provider": "openai-compatible",
+    "model": "qwen2.5-coder:7b",
+    "baseUrl": "http://localhost:11434/v1",
+    "apiKeyEnv": "LLM_API_KEY",
     "temperature": 0.1,
-    "pricePer1MInput": 2.0,
-    "pricePer1MOutput": 8.0,
+    "maxInputTokensPerCall": 5000,
+    "maxOutputTokens": 1500,
+    "timeoutSec": 600,
+    "pricePer1MInput": 0,
+    "pricePer1MOutput": 0,
     "minConfidence": 0.6,
     "criticalMinConfidence": 0.85
   },
   "analyzers": {
-    "semgrep": { "enabled": true, "configs": ["p/default"] },
-    "ruff": { "enabled": true, "select": ["E9", "F", "B", "S"] },
-    "gitleaks": { "enabled": true },
-    "osv": { "enabled": true },
-    "tests": { "enabled": true, "minChangedLines": 15 }
+    "semgrep": {
+      "enabled": true,
+      "configs": [
+        "p/default"
+      ]
+    },
+    "ruff": {
+      "enabled": true,
+      "select": [
+        "E9",
+        "F",
+        "B",
+        "S"
+      ]
+    },
+    "gitleaks": {
+      "enabled": true
+    },
+    "osv": {
+      "enabled": true
+    },
+    "tests": {
+      "enabled": true,
+      "minChangedLines": 15
+    }
   },
   "minSeverity": "low",
   "maxComments": 25,
   "blockOnCritical": false,
-  "ignorePaths": ["**/*.md", "**/*.lock", "**/package-lock.json", "reviewer/fixtures/**"],
-  "disabledRules": ["ruff:S101"]
+  "ignorePaths": [
+    "**/*.md",
+    "**/*.lock",
+    "**/package-lock.json",
+    "reviewer/fixtures/**"
+  ],
+  "disabledRules": [
+    "ruff:S101"
+  ]
 }

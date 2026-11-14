@@ -93,7 +93,7 @@ async function chat(cfg: Config['llm'], user: string, env: NodeJS.ProcessEnv) {
       method: 'POST',
       headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(170_000),
+      signal: AbortSignal.timeout((cfg.timeoutSec ?? 300) * 1000),
     });
     if (res.status === 429 || res.status >= 500) {
       const wait = Math.min(60, Number(res.headers.get('retry-after')) || 5 * 2 ** attempt);
