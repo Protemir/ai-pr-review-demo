@@ -35,6 +35,12 @@ export function looksLikeCode(s: string): boolean {
   return !prose && /[=(){}\[\];:<>"'`]/.test(t);
 }
 
+/** Исправление к секрету не должно повторять сам секрет (например, `env.KEY || 'старый ключ'`). */
+export function leaksLiteral(suggestion: string, originalLines: string[]): boolean {
+  const literals = originalLines.join('\n').match(/(["'`])([^"'`\n]{8,})\1/g) ?? [];
+  return literals.some((l) => suggestion.includes(l.slice(1, -1)));
+}
+
 /** Разница открывающих и закрывающих скобок без учёта строк в кавычках. */
 export function bracketBalance(code: string): number {
   const s = code.replace(/(["'`])(?:\\.|(?!\1).)*\1/g, '');

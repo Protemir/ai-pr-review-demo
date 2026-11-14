@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { parseDiff, snapToAdded } from '../src/diff.ts';
 import { DEFAULT_CONFIG, globToRegex, isIgnored } from '../src/config.ts';
-import { mergeFindings, fingerprint, fitIndent, isPlaceholder, suggestionFits } from '../src/merge.ts';
+import { mergeFindings, fingerprint, fitIndent, isPlaceholder, leaksLiteral, suggestionFits } from '../src/merge.ts';
 import { extractDeps, mapGitleaks, mapRuff, mapSemgrep, testsHeuristics } from '../src/analyzers.ts';
 import { newFunctions, parseLlmJson, readSse, renderFile, runLlm } from '../src/llm.ts';
 import { createServer } from 'node:http';
@@ -235,4 +235,10 @@ test('alreadyThere: то же замечание на соседней стро�
   assert.ok(!alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 56, group: 'security', falsePositive: false }]));
   assert.ok(alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 50, group: 'security', title: 'XSS в выводе', falsePositive: false }]));
   assert.ok(!alreadyThere(f, [{ fp: 'old', path: 'a.ts', line: 50, group: 'security', title: 'SQL-инъекция', falsePositive: false }]));
+});
+
+test('leaksLiteral: исправление к секрету не повторяет секрет', () => {
+  const line = ["const KEY = 'a8Fq2Lz9Wc4Rt7Yx';"];
+  assert.ok(leaksLiteral("const KEY = process.env.KEY || 'a8Fq2Lz9Wc4Rt7Yx';", line));
+  assert.ok(!leaksLiteral('const KEY = process.env.KEY;', line));
 });
