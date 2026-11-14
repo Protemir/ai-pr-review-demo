@@ -2,13 +2,18 @@ import { CLASS_LABEL, SEVERITY_LABEL, type Finding } from './types.ts';
 
 export const FP_MARK = /<!-- ai-review:fp=([0-9a-f]+)(?:;g=([a-z]+))? -->/;
 
-export interface PublishedComment { fp: string; path: string; line: number; group?: string; falsePositive: boolean }
+export interface PublishedComment { fp: string; path: string; line: number; group?: string; title?: string; falsePositive: boolean }
+
+const KEY = /xss|sql|yaml|json|prototype|csrf|ssrf|секрет|ключ|парол|токен|десериализ|авторизац|прав доступа|null|none|undefined|пагинац|страниц|дат|тест/gi;
+const keys = (t = '') => new Set((t.toLowerCase().match(KEY) ?? []));
+const shareKey = (a?: string, b?: string) => [...keys(a)].some((k) => keys(b).has(k));
 
 /** Уже есть такое замечание: тот же отпечаток или тот же файл и группа класса в пределах ±3 строк. */
 export function alreadyThere(f: Finding, list: PublishedComment[], onlyFalse = false): boolean {
   const g = f.cls === 'secrets' ? 'security' : f.cls;
   return list.some((c) => (!onlyFalse || c.falsePositive) &&
-    (c.fp === f.fingerprint || (c.path === f.path && c.group === g && Math.abs(c.line - f.line) <= 3)));
+    (c.fp === f.fingerprint || (c.path === f.path && c.group === g &&
+      (Math.abs(c.line - f.line) <= 3 || (Math.abs(c.line - f.line) <= 12 && shareKey(c.title, f.title))))));
 }
 export const SUMMARY_MARK = '<!-- ai-review:summary -->';
 
@@ -66,7 +71,8 @@ export class GitHub {
       // Старые комментарии без g=: группа по подписи класса в первой строке.
       const label = Object.entries(CLASS_LABEL).find(([, l]) => String(c.body).split('\n')[0].includes(`· ${l}`))?.[0];
       const group = m[2] ?? (label === 'secrets' ? 'security' : label);
-      out.push({ fp: m[1], group, path: c.path, line: c.line ?? c.original_line ?? 0, falsePositive: (c.reactions?.['-1'] ?? 0) > 0 });
+      const title = String(c.body).split('\n')[0].split(' — ').slice(1).join(' — ');
+      out.push({ fp: m[1], group, title, path: c.path, line: c.line ?? c.original_line ?? 0, falsePositive: (c.reactions?.['-1'] ?? 0) > 0 });
     }
     return out;
   }
