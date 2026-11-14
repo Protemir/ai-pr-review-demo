@@ -1,0 +1,113 @@
+import { createHash } from 'node:crypto';
+import type { Config } from './config.ts';
+import { snapToAdded, type DiffFile } from './diff.ts';
+import { CLASSES, SEVERITIES, SEVERITY_ORDER, type Finding, type FindingClass, type LlmRawFinding, type Severity } from './types.ts';
+
+export interface MergeStats {
+  llmAccepted: number;
+  llmEnriched: number;
+  llmDroppedLine: number;
+  llmDroppedConfidence: number;
+  llmDowngraded: number;
+  deduplicated: number;
+}
+
+const maxSev = (a: Severity, b: Severity): Severity => (SEVERITY_ORDER[a] >= SEVERITY_ORDER[b] ? a : b);
+const group = (c: FindingClass) => (c === 'secrets' ? 'security' : c);
+
+export function fingerprint(f: Finding, lineText: string): string {
+  return createHash('sha1').update(`${f.path}|${group(f.cls)}|${lineText.trim().replace(/\s+/g, ' ')}`).digest('hex').slice(0, 12);
+}
+
+export function mergeFindings(
+  statics: Finding[],
+  raw: LlmRawFinding[],
+  files: DiffFile[],
+  cfg: Config,
+  modelName: string,
+): { findings: Finding[]; stats: MergeStats } {
+  const stats: MergeStats = { llmAccepted: 0, llmEnriched: 0, llmDroppedLine: 0, llmDroppedConfidence: 0, llmDowngraded: 0, deduplicated: 0 };
+  const all: Finding[] = statics.map((s) => ({ ...s }));
+  const byId = new Map(all.map((s) => [s.id, s]));
+  let n = 0;
+  for (const r of raw) {
+    const file = files.find((f) => f.path === r.path);
+    const conf = typeof r.confidence === 'number' ? r.confidence : 0.7;
+    const related = r.related_static_id ? byId.get(r.related_static_id) : undefined;
+    if (related) {
+      // LLM уточняет замечание анализатора: добавляем объяснение и исправление.
+      if (r.explanation) related.explanation = `${r.explanation}\n\n_Анализатор: ${related.explanation.split('\n')[0]}_`;
+      if (r.suggestion && !related.suggestion && file && r.line && Math.abs(r.line - related.line) <= 3) {
+        related.line = r.line;
+        related.endLine = r.end_line && r.end_line >= r.line ? r.end_line : undefined;
+        related.suggestion = r.suggestion;
+      }
+      if (r.severity && SEVERITIES.includes(r.severity as Severity) && conf >= cfg.llm.minConfidence) {
+        related.severity = maxSev(related.severity, r.severity as Severity);
+      }
+      related.sources.push(`llm:${modelName}`);
+      stats.llmEnriched++;
+      continue;
+    }
+    if (!file || !r.line) {
+      stats.llmDroppedLine++;
+      continue;
+    }
+    if (conf < cfg.llm.minConfidence) {
+      stats.llmDroppedConfidence++;
+      continue;
+    }
+    const line = snapToAdded(file, Math.round(r.line), 3);
+    if (!line) {
+      stats.llmDroppedLine++;
+      continue;
+    }
+    let severity: Severity = SEVERITIES.includes(r.severity as Severity) ? (r.severity as Severity) : 'medium';
+    if (severity === 'critical' && conf < cfg.llm.criticalMinConfidence) {
+      severity = 'high';
+      stats.llmDowngraded++;
+    }
+    const cls: FindingClass = CLASSES.includes(r.class as FindingClass) ? (r.class as FindingClass) : 'logic';
+    // Если строку пришлось сдвинуть, исправление уже не ложится на нужные строки — не публикуем его.
+    const exact = line === Math.round(r.line);
+    let endLine = exact && r.end_line && r.end_line > line ? Math.round(r.end_line) : undefined;
+    if (endLine && [...Array(endLine - line + 1).keys()].some((k) => !file.commentable.has(line + k))) endLine = undefined;
+    const multiLineSuggestion = (r.suggestion ?? '').split('\n').length > 1;
+    const rangeOk = endLine || !r.end_line || r.end_line <= r.line || !multiLineSuggestion;
+    const suggestion = exact && r.suggestion && rangeOk ? r.suggestion : undefined;
+    all.push({
+      id: `L${++n}`, path: file.path, line, endLine: endLine && endLine > line ? endLine : undefined, cls, severity,
+      title: String(r.title ?? 'Замечание').slice(0, 140), explanation: String(r.explanation ?? ''),
+      suggestion: suggestion || undefined, sources: [`llm:${modelName}`], ruleIds: [], confidence: conf,
+    });
+    stats.llmAccepted++;
+  }
+
+  // Дедупликация: та же строка и группа класса — одно замечание; соседние строки (±2) склеиваем,
+  // только если одно замечание от анализатора, а другое от LLM (LLM повторил анализатор).
+  const isLlmOnly = (x: Finding) => x.sources.every((s) => s.startsWith('llm'));
+  const out: Finding[] = [];
+  for (const f of all.sort((a, b) => SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity])) {
+    const dup = out.find((o) => o.path === f.path && group(o.cls) === group(f.cls) &&
+      (o.line === f.line || (Math.abs(o.line - f.line) <= 2 && isLlmOnly(o) !== isLlmOnly(f))));
+    if (!dup) {
+      out.push(f);
+      continue;
+    }
+    stats.deduplicated++;
+    dup.sources = [...new Set([...dup.sources, ...f.sources])];
+    dup.ruleIds = [...new Set([...dup.ruleIds, ...f.ruleIds])];
+    if (!dup.suggestion && f.suggestion) {
+      // Исправление привязано к своим строкам — переносим якорь вместе с ним.
+      dup.suggestion = f.suggestion;
+      dup.line = f.line;
+      dup.endLine = f.endLine;
+    }
+    if (f.explanation.length > dup.explanation.length && f.sources.some((s) => s.startsWith('llm'))) dup.explanation = f.explanation;
+  }
+
+  const minRank = SEVERITY_ORDER[cfg.minSeverity];
+  const filtered = out.filter((f) => SEVERITY_ORDER[f.severity] >= minRank && !f.ruleIds.some((r) => cfg.disabledRules.includes(r)));
+  filtered.sort((a, b) => SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity] || a.path.localeCompare(b.path) || a.line - b.line);
+  return { findings: filtered, stats };
+}

@@ -1,0 +1,14 @@
+{
+  "name": "ai-pr-review",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "AI-ассистент код-ревью pull request: статический анализ + LLM (демо TEMIRLAB)",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "test": "node --test test/reviewer.test.ts",
+    "review": "node src/main.ts",
+    "serve": "node src/server.ts"
+  },
+  "license": "MIT"
+}

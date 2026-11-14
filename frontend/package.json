@@ -1,0 +1,12 @@
+{
+  "name": "conduit-frontend-demo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test src/format.test.ts"
+  },
+  "dependencies": {
+    "marked": "15.0.0"
+  }
+}
