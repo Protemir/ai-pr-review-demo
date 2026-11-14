@@ -1,6 +1,7 @@
 from flask import Blueprint, abort, jsonify, request
 
 from .db import get_db
+from .slug import slugify
 
 bp = Blueprint("articles", __name__)
 
@@ -30,7 +31,7 @@ def create_article():
     db = get_db()
     db.execute(
         "INSERT INTO articles (slug, title, body, author) VALUES (?, ?, ?, ?)",
-        (data["title"].lower().replace(" ", "-"), data["title"], data["body"], data.get("author", "anonymous")),
+        (slugify(data["title"]), data["title"], data["body"], data.get("author", "anonymous")),
     )
     db.commit()
     return jsonify({"article": data}), 201
