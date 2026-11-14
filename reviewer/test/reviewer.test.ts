@@ -3,9 +3,9 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { parseDiff, snapToAdded } from '../src/diff.ts';
 import { DEFAULT_CONFIG, globToRegex, isIgnored } from '../src/config.ts';
-import { mergeFindings, fingerprint, fitIndent } from '../src/merge.ts';
+import { mergeFindings, fingerprint, fitIndent, isPlaceholder } from '../src/merge.ts';
 import { extractDeps, mapGitleaks, mapRuff, mapSemgrep, testsHeuristics } from '../src/analyzers.ts';
-import { parseLlmJson, renderFile } from '../src/llm.ts';
+import { newFunctions, parseLlmJson, readSse, renderFile } from '../src/llm.ts';
 import { commentBody, FP_MARK } from '../src/github.ts';
 import { shouldReview, verifySignature } from '../src/server.ts';
 import type { Finding } from '../src/types.ts';
@@ -150,4 +150,32 @@ test('fitIndent: возвращает потерянный отступ', () => 
 test('parseLlmJson: fixes превращаются в уточнения замечаний анализаторов', () => {
   const r = parseLlmJson('{"findings":[],"fixes":[{"static_id":"S2","line":5,"suggestion":"x"}]}');
   assert.equal(r[0].related_static_id, 'S2');
+});
+
+test('isPlaceholder: заглушки вместо кода не публикуются как suggestion', () => {
+  assert.ok(isPlaceholder("root.innerHTML = a.map(x => `<b>...</b>`)"));
+  assert.ok(isPlaceholder("test('x', () => { ... });"));
+  assert.ok(!isPlaceholder('const all = [...items, extra];'));
+});
+
+test('newFunctions: функции из добавленных строк', () => {
+  const listing = '   10 + def list_comments(slug):\n   11   def old():\n   12 + export function formatDate(iso: string) {\n   13 + const isOwn = (a) => a';
+  assert.deepEqual(newFunctions(listing), ['list_comments', 'formatDate', 'isOwn']);
+});
+
+test('readSse: собирает потоковый ответ и usage', async () => {
+  const sse = 'data: {"choices":[{"delta":{"content":"{\\"fin"}}]}\n\ndata: {"choices":[{"delta":{"content":"dings\\":[]}"}}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":4}}\n\ndata: [DONE]\n';
+  const r = await readSse(new Response(sse), 'x');
+  assert.equal(r.text, '{"findings":[]}');
+  assert.equal(r.promptTokens, 11);
+});
+
+test('merge: повтор одного замечания на соседних строках склеивается, XSS — это безопасность', () => {
+  const files = parseDiff(DIFF);
+  const { findings } = mergeFindings([], [
+    { path: 'app/x.py', line: 2, class: 'logic', severity: 'medium', title: 'XSS в выводе', explanation: '...', confidence: 0.9 },
+    { path: 'app/x.py', line: 4, class: 'logic', severity: 'medium', title: 'XSS в выводе', explanation: '...', confidence: 0.9 },
+  ], files, DEFAULT_CONFIG, 'm');
+  assert.equal(findings.length, 1);
+  assert.equal(findings[0].cls, 'security');
 });

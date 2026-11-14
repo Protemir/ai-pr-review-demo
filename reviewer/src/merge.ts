@@ -19,6 +19,14 @@ export function fingerprint(f: Finding, lineText: string): string {
   return createHash('sha1').update(`${f.path}|${group(f.cls)}|${lineText.trim().replace(/\s+/g, ' ')}`).digest('hex').slice(0, 12);
 }
 
+const SECURITY_WORDS = /\bXSS\b|инъекц|injection|prototype pollution|десериализ|deserializ|авторизац|authoriz|доступ к чуж/i;
+const normTitle = (t: string) => t.toLowerCase().replace(/[^a-zа-яё0-9]+/g, ' ').trim();
+
+/** Заглушки вместо кода («...», «…», «{ ... }») — такое исправление нельзя применить. */
+export function isPlaceholder(s: string): boolean {
+  return /…/.test(s) || /\{\s*\.\.\.\s*\}/.test(s) || /\.\.\.\s*(<|`|'|"|\)|\]|;|$)/m.test(s) || /^\s*\.\.\./m.test(s);
+}
+
 /** Модель часто теряет отступ: выравниваем исправление по первой заменяемой строке. */
 export function fitIndent(suggestion: string, original: string): string {
   const want = /^\s*/.exec(original)?.[0] ?? '';
@@ -55,7 +63,7 @@ export function mergeFindings(
       // LLM уточняет замечание анализатора: добавляем объяснение и исправление.
       if (r.title && /[а-яё]/i.test(r.title)) related.title = r.title.slice(0, 140);
       if (r.explanation) related.explanation = `${r.explanation}\n\n_Анализатор: ${related.explanation.split('\n')[0]}_`;
-      if (r.suggestion && !related.suggestion && file && r.line && Math.abs(r.line - related.line) <= 3) {
+      if (r.suggestion && !isPlaceholder(r.suggestion) && !related.suggestion && file && r.line && Math.abs(r.line - related.line) <= 3) {
         related.line = r.line;
         related.endLine = r.end_line && r.end_line >= r.line ? r.end_line : undefined;
         related.suggestion = r.suggestion;
@@ -85,17 +93,25 @@ export function mergeFindings(
       severity = 'high';
       stats.llmDowngraded++;
     }
-    const cls: FindingClass = CLASSES.includes(r.class as FindingClass) ? (r.class as FindingClass) : 'logic';
+    let cls: FindingClass = CLASSES.includes(r.class as FindingClass) ? (r.class as FindingClass) : 'logic';
+    if (cls !== 'security' && SECURITY_WORDS.test(`${r.title} ${r.explanation}`)) cls = 'security';
+    const title = String(r.title ?? 'Замечание').slice(0, 140);
+    // Маленькая модель повторяет одно замечание на соседних строках — оставляем первое.
+    const repeat = all.find((o) => o.id.startsWith('L') && o.path === file.path && normTitle(o.title) === normTitle(title) && Math.abs(o.line - line) <= 15);
+    if (repeat) {
+      stats.deduplicated++;
+      continue;
+    }
     // Если строку пришлось сдвинуть, исправление уже не ложится на нужные строки — не публикуем его.
     const exact = line === Math.round(r.line);
     let endLine = exact && r.end_line && r.end_line > line ? Math.round(r.end_line) : undefined;
     if (endLine && [...Array(endLine - line + 1).keys()].some((k) => !file.commentable.has(line + k))) endLine = undefined;
     const multiLineSuggestion = (r.suggestion ?? '').split('\n').length > 1;
     const rangeOk = endLine || !r.end_line || r.end_line <= r.line || !multiLineSuggestion;
-    const suggestion = exact && r.suggestion && rangeOk ? r.suggestion : undefined;
+    const suggestion = exact && r.suggestion && rangeOk && !isPlaceholder(r.suggestion) ? r.suggestion : undefined;
     all.push({
       id: `L${++n}`, path: file.path, line, endLine: endLine && endLine > line ? endLine : undefined, cls, severity,
-      title: String(r.title ?? 'Замечание').slice(0, 140), explanation: String(r.explanation ?? ''),
+      title, explanation: String(r.explanation ?? ''),
       suggestion: suggestion || undefined, sources: [`llm:${modelName}`], ruleIds: [], confidence: conf,
     });
     stats.llmAccepted++;

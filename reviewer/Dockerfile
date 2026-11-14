@@ -4,7 +4,7 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends git python3 pipx ca-certificates curl \
  && rm -rf /var/lib/apt/lists/*
 ENV PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin
-RUN pipx install semgrep==1.95.0 && pipx install ruff==0.7.4 \
+RUN pipx install semgrep==1.95.0 && pipx inject semgrep "setuptools<81" && pipx install ruff==0.7.4 \
  && curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz -C /usr/local/bin gitleaks
 WORKDIR /app
 COPY package.json ./

@@ -108,6 +108,21 @@ async function semgrep(ctx: AnalyzerContext) {
 }
 
 // ---------- Ruff (Python) ----------
+const RUFF_TITLE_RU: Record<string, string> = {
+  S608: 'Возможная SQL-инъекция: запрос собирается из строки',
+  S506: 'Небезопасный yaml.load: можно создать произвольный объект',
+  S301: 'Небезопасная десериализация pickle',
+  S602: 'Запуск команды через shell с внешними данными',
+  S105: 'Пароль или секрет прямо в коде',
+  S106: 'Пароль или секрет прямо в коде',
+  S107: 'Пароль по умолчанию в аргументе функции',
+  S201: 'Flask запущен с debug=True',
+  S501: 'Отключена проверка TLS-сертификата',
+  F821: 'Неопределённое имя',
+  F841: 'Переменная присвоена, но не используется',
+  F401: 'Импорт не используется',
+};
+
 const RUFF_MAP: Record<string, [FindingClass, Severity]> = {
   S608: ['security', 'critical'], S506: ['security', 'critical'], S301: ['security', 'high'], S602: ['security', 'critical'],
   S605: ['security', 'high'], S105: ['secrets', 'high'], S106: ['secrets', 'high'], S107: ['secrets', 'high'],
@@ -128,7 +143,7 @@ export function mapRuff(json: any[], repoDir: string, files: DiffFile[], disable
       (code.startsWith('S') ? ['security', 'medium'] : code.startsWith('B') ? ['logic', 'medium'] : ['quality', 'low']);
     out.push({
       id: nextId(), path, line, cls, severity,
-      title: String(r.message).slice(0, 140),
+      title: RUFF_TITLE_RU[code] ?? String(r.message).slice(0, 140),
       explanation: `${r.message} (ruff ${code})${r.url ? `\n\nПравило: ${r.url}` : ''}`,
       sources: ['ruff'], ruleIds: [`ruff:${code}`],
     });

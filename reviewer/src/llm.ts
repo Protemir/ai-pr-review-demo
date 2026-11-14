@@ -65,7 +65,26 @@ export function buildChunks(files: { file: DiffFile; content: string[] }[], stat
     cur += (cur ? '\n\n' : '') + p;
   }
   if (cur) chunks.push(cur);
-  return chunks.map((c) => `${meta}\n\n${c}\n\nНайди новые проблемы (особенно пункты 1–5) и дай исправления к замечаниям анализаторов. Ответ — JSON, все тексты на русском.`);
+  return chunks.map((c) => {
+    const fns = newFunctions(c);
+    const fnLine = fns.length ? `\n\nНовые функции в этом PR: ${fns.join(', ')}. Проверь КАЖДУЮ по пунктам 1–5.` : '';
+    return `${meta}\n\n${c}${fnLine}\n\nНайди новые проблемы и дай исправления к замечаниям анализаторов. Одна проблема — одно замечание, не повторяй его для соседних строк. Не больше 8 findings. Ответ — JSON, все тексты на русском.`;
+  });
+}
+
+/** Имена функций, объявленных в добавленных строках листинга (Python, TS/JS, Java). */
+export function newFunctions(listing: string): string[] {
+  const names = new Set<string>();
+  for (const line of listing.split('\n')) {
+    if (!/^\s*\d+ \+ /.test(line)) continue;
+    const code = line.replace(/^\s*\d+ \+ /, '');
+    const m = /^\s*(?:async\s+)?def\s+(\w+)/.exec(code) ??
+      /^\s*(?:export\s+)?(?:async\s+)?function\s+(\w+)/.exec(code) ??
+      /^\s*(?:export\s+)?const\s+(\w+)\s*=\s*(?:async\s*)?\(/.exec(code) ??
+      /^\s*(?:public|private|protected)\s+[\w<>\[\], ]+\s+(\w+)\s*\(/.exec(code);
+    if (m && !m[1].startsWith('test')) names.add(m[1]);
+  }
+  return [...names].slice(0, 20);
 }
 
 export function parseLlmJson(text: string): LlmRawFinding[] {
@@ -84,6 +103,36 @@ export function parseLlmJson(text: string): LlmRawFinding[] {
   return out;
 }
 
+export async function readSse(res: Response, user: string) {
+  const decoder = new TextDecoder();
+  let buf = '';
+  let text = '';
+  let promptTokens = 0;
+  let completionTokens = 0;
+  const handle = (line: string) => {
+    const l = line.trim();
+    if (!l.startsWith('data:')) return;
+    const data = l.slice(5).trim();
+    if (!data || data === '[DONE]') return;
+    const j = JSON.parse(data);
+    text += j.choices?.[0]?.delta?.content ?? '';
+    if (j.usage) {
+      promptTokens = Number(j.usage.prompt_tokens ?? 0);
+      completionTokens = Number(j.usage.completion_tokens ?? 0);
+    }
+  };
+  for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
+    buf += decoder.decode(chunk, { stream: true });
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      handle(buf.slice(0, i));
+      buf = buf.slice(i + 1);
+    }
+  }
+  handle(buf);
+  return { text, promptTokens: promptTokens || estTokens(user), completionTokens: completionTokens || estTokens(text) };
+}
+
 async function chat(cfg: Config['llm'], user: string, env: NodeJS.ProcessEnv) {
   const key = env[cfg.apiKeyEnv] ?? '';
   const body: Record<string, unknown> = {
@@ -95,6 +144,9 @@ async function chat(cfg: Config['llm'], user: string, env: NodeJS.ProcessEnv) {
       { role: 'user', content: user },
     ],
     response_format: { type: 'json_object' },
+    // Потоковый ответ: медленная локальная модель не упирается в тайм-аут ожидания заголовков (300 с в Node).
+    stream: true,
+    stream_options: { include_usage: true },
   };
   for (let attempt = 0; attempt < 4; attempt++) {
     const res = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
@@ -109,12 +161,15 @@ async function chat(cfg: Config['llm'], user: string, env: NodeJS.ProcessEnv) {
       continue;
     }
     if (!res.ok) throw new Error(`LLM HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    const j: any = await res.json();
-    return {
-      text: String(j.choices?.[0]?.message?.content ?? ''),
-      promptTokens: Number(j.usage?.prompt_tokens ?? estTokens(user)),
-      completionTokens: Number(j.usage?.completion_tokens ?? 0),
-    };
+    if (!String(res.headers.get('content-type')).includes('event-stream')) {
+      const j: any = await res.json();
+      return {
+        text: String(j.choices?.[0]?.message?.content ?? ''),
+        promptTokens: Number(j.usage?.prompt_tokens ?? estTokens(user)),
+        completionTokens: Number(j.usage?.completion_tokens ?? 0),
+      };
+    }
+    return readSse(res, user);
   }
   throw new Error('LLM: превышено число повторов (429/5xx)');
 }
