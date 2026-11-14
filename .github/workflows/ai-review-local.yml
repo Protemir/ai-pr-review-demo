@@ -36,6 +36,11 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Ревьюер и конфиг из main (код PR не исполняется)
+        run: |
+          git fetch -q origin main
+          git checkout FETCH_HEAD -- reviewer .ai-review.json
+
       - uses: actions/setup-node@v4
         with:
           node-version: 24

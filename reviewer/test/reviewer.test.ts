@@ -5,7 +5,8 @@ import { parseDiff, snapToAdded } from '../src/diff.ts';
 import { DEFAULT_CONFIG, globToRegex, isIgnored } from '../src/config.ts';
 import { mergeFindings, fingerprint, fitIndent, isPlaceholder, suggestionFits } from '../src/merge.ts';
 import { extractDeps, mapGitleaks, mapRuff, mapSemgrep, testsHeuristics } from '../src/analyzers.ts';
-import { newFunctions, parseLlmJson, readSse, renderFile } from '../src/llm.ts';
+import { newFunctions, parseLlmJson, readSse, renderFile, runLlm } from '../src/llm.ts';
+import { createServer } from 'node:http';
 import { commentBody, FP_MARK } from '../src/github.ts';
 import { shouldReview, verifySignature } from '../src/server.ts';
 import type { Finding } from '../src/types.ts';
@@ -199,4 +200,30 @@ test('suggestionFits: исправление не должно ломать ск
   assert.ok(!suggestionFits('db.execute(f"SELECT ? ", (slug,))', ['    rows = get_db().execute(']));
   assert.ok(suggestionFits('    data = yaml.safe_load(request.data)', ['    data = yaml.load(request.data)']));
   assert.ok(suggestionFits('x = ")("', ['x = 1']));
+});
+
+test('runLlm: OpenAI-совместимый сервер со стримингом (как Ollama)', async () => {
+  const srv = createServer((req, res) => {
+    let b = '';
+    req.on('data', (c) => (b += c));
+    req.on('end', () => {
+      assert.equal(JSON.parse(b).stream, true);
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: {"choices":[{"delta":{"content":"{\\"findings\\":[{\\"path\\":\\"a.py\\",\\"line\\":2"}}]}\n\n');
+      setTimeout(() => {
+        res.write('data: {"choices":[{"delta":{"content":",\\"title\\":\\"t\\"}]}"}}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20}}\n\ndata: [DONE]\n\n');
+        res.end();
+      }, 50);
+    });
+  });
+  await new Promise<void>((r) => srv.listen(0, r));
+  const port = (srv.address() as { port: number }).port;
+  const [x] = parseDiff(DIFF);
+  const r = await runLlm({ ...DEFAULT_CONFIG.llm, baseUrl: `http://127.0.0.1:${port}/v1`, pricePer1MInput: 1, pricePer1MOutput: 2 },
+    [{ file: x, content: ['a', 'b', 'c', 'd', 'e'] }], [], 'meta', {});
+  srv.close();
+  assert.equal(r.error, undefined);
+  assert.equal(r.raw.length, 1);
+  assert.equal(r.promptTokens, 100);
+  assert.ok(Math.abs(r.costUsd - 0.00014) < 1e-9);
 });

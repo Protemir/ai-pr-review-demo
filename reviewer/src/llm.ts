@@ -1,4 +1,7 @@
 import { readFileSync } from 'node:fs';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
+import { Readable } from 'node:stream';
 import type { Config } from './config.ts';
 import type { DiffFile } from './diff.ts';
 import type { Finding, LlmRawFinding, LlmRun } from './types.ts';
@@ -134,6 +137,24 @@ export async function readSse(res: Response, user: string) {
   return { text, promptTokens: promptTokens || estTokens(user), completionTokens: completionTokens || estTokens(text) };
 }
 
+/**
+ * POST через node:http(s): у встроенного fetch жёсткий тайм-аут ожидания заголовков (300 с),
+ * а локальная модель на CPU может читать длинный промпт дольше. Здесь ограничение одно — общий timeoutMs.
+ */
+function post(url: string, headers: Record<string, string>, body: string, timeoutMs: number): Promise<Response> {
+  return new Promise((resolve, reject) => {
+    const u = new URL(url);
+    const req = (u.protocol === 'https:' ? httpsRequest : httpRequest)(u, { method: 'POST', headers }, (res) => {
+      const h = new Headers();
+      for (const [k, v] of Object.entries(res.headers)) if (v !== undefined) h.set(k, Array.isArray(v) ? v.join(', ') : String(v));
+      resolve(new Response(Readable.toWeb(res) as ReadableStream, { status: res.statusCode ?? 0, headers: h }));
+    });
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`LLM: нет ответа ${Math.round(timeoutMs / 1000)} с`)));
+    req.on('error', reject);
+    req.end(body);
+  });
+}
+
 async function chat(cfg: Config['llm'], user: string, env: NodeJS.ProcessEnv) {
   const key = env[cfg.apiKeyEnv] ?? '';
   const body: Record<string, unknown> = {
@@ -150,12 +171,9 @@ async function chat(cfg: Config['llm'], user: string, env: NodeJS.ProcessEnv) {
     stream_options: { include_usage: true },
   };
   for (let attempt = 0; attempt < 4; attempt++) {
-    const res = await fetch(`${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout((cfg.timeoutSec ?? 300) * 1000),
-    });
+    const res = await post(`${cfg.baseUrl.replace(/\/$/, '')}/chat/completions`,
+      { 'content-type': 'application/json', ...(key ? { authorization: `Bearer ${key}` } : {}) },
+      JSON.stringify(body), (cfg.timeoutSec ?? 300) * 1000);
     if (res.status === 429 || res.status >= 500) {
       const wait = Math.min(60, Number(res.headers.get('retry-after')) || 5 * 2 ** attempt);
       await new Promise((r) => setTimeout(r, wait * 1000));
