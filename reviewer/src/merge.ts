@@ -27,6 +27,14 @@ export function isPlaceholder(s: string): boolean {
   return /…/.test(s) || /\{\s*\.\.\.\s*\}/.test(s) || /\.\.\.\s*(<|`|'|"|\)|\]|;|$)/m.test(s) || /^\s*\.\.\./m.test(s);
 }
 
+/** «Используйте параметризованный запрос.» — совет, а не код; в suggestion такое не кладём. */
+export function looksLikeCode(s: string): boolean {
+  const t = s.trim();
+  if (!t) return false;
+  const prose = /^[А-ЯЁA-Z][а-яёa-z]+\s+[а-яёa-z]/.test(t) && /[а-яё]{3,}/i.test(t);
+  return !prose && /[=(){}\[\];:<>"'`]/.test(t);
+}
+
 /** Модель часто теряет отступ: выравниваем исправление по первой заменяемой строке. */
 export function fitIndent(suggestion: string, original: string): string {
   const want = /^\s*/.exec(original)?.[0] ?? '';
@@ -47,7 +55,14 @@ export function mergeFindings(
   const all: Finding[] = statics.map((s) => ({ ...s }));
   const byId = new Map(all.map((s) => [s.id, s]));
   let n = 0;
-  for (const r of raw) {
+  for (const r0 of raw) {
+    // Модели пишут «secrets/critical», «Security» и т. п. — нормализуем.
+    const r = {
+      ...r0,
+      class: r0.class ? String(r0.class).toLowerCase().split(/[\/|,\s]/)[0] : undefined,
+      severity: r0.severity ? String(r0.severity).toLowerCase().split(/[\/|,\s]/)[0] : undefined,
+      suggestion: r0.suggestion && looksLikeCode(r0.suggestion) ? r0.suggestion : undefined,
+    };
     const conf = typeof r.confidence === 'number' ? r.confidence : 0.7;
     let related = r.related_static_id ? byId.get(r.related_static_id) : undefined;
     // Маленькие модели путают id: принимаем уточнение, только если строка и класс сходятся.
@@ -64,6 +79,7 @@ export function mergeFindings(
       if (r.title && /[а-яё]/i.test(r.title)) related.title = r.title.slice(0, 140);
       if (r.explanation) related.explanation = `${r.explanation}\n\n_Анализатор: ${related.explanation.split('\n')[0]}_`;
       if (r.suggestion && !isPlaceholder(r.suggestion) && !related.suggestion && file && r.line && Math.abs(r.line - related.line) <= 3) {
+        related.origLine ??= related.line;
         related.line = r.line;
         related.endLine = r.end_line && r.end_line >= r.line ? r.end_line : undefined;
         related.suggestion = r.suggestion;
@@ -121,13 +137,16 @@ export function mergeFindings(
     stats.llmAccepted++;
   }
 
-  // Дедупликация: та же строка и группа класса — одно замечание; соседние строки (±2) склеиваем,
-  // только если одно замечание от анализатора, а другое от LLM (LLM повторил анализатор).
-  const isLlmOnly = (x: Finding) => x.sources.every((s) => s.startsWith('llm'));
+  // Дедупликация: та же строка и группа класса — одно замечание. Соседние строки (±2) склеиваем,
+  // если замечания пришли из разных источников (Ruff и Semgrep про один SQL, LLM повторил анализатор);
+  // два замечания одного источника на соседних строках — обычно разные проблемы.
+  const tool = (x: Finding) => x.sources[0].split(':')[0];
+  const ranges = (x: Finding) => [x.line, x.endLine ?? x.line, x.origLine ?? x.line];
+  const near = (a: Finding, b: Finding) => ranges(a).some((la) => ranges(b).some((lb) => Math.abs(la - lb) <= 2));
   const out: Finding[] = [];
   for (const f of all.sort((a, b) => SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity])) {
     const dup = out.find((o) => o.path === f.path && group(o.cls) === group(f.cls) &&
-      (o.line === f.line || (Math.abs(o.line - f.line) <= 2 && isLlmOnly(o) !== isLlmOnly(f))));
+      (o.line === f.line || (near(o, f) && tool(o) !== tool(f))));
     if (!dup) {
       out.push(f);
       continue;
@@ -138,6 +157,7 @@ export function mergeFindings(
     if (!dup.suggestion && f.suggestion) {
       // Исправление привязано к своим строкам — переносим якорь вместе с ним.
       dup.suggestion = f.suggestion;
+      dup.origLine ??= dup.line;
       dup.line = f.line;
       dup.endLine = f.endLine;
     }

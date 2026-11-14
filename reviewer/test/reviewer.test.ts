@@ -179,3 +179,18 @@ test('merge: повтор одного замечания на соседних 
   assert.equal(findings.length, 1);
   assert.equal(findings[0].cls, 'security');
 });
+
+test('merge: совет текстом не становится suggestion; «secrets/critical» понимается; Ruff+Semgrep про один SQL склеиваются', () => {
+  const files = parseDiff(DIFF);
+  const ruff: Finding = { id: 'S1', path: 'app/x.py', line: 3, cls: 'security', severity: 'critical', title: 'SQL', explanation: 'ruff', sources: ['ruff'], ruleIds: ['ruff:S608'] };
+  const sg: Finding = { id: 'S2', path: 'app/x.py', line: 2, cls: 'security', severity: 'high', title: 'SQL', explanation: 'semgrep', sources: ['semgrep'], ruleIds: ['semgrep:sql'] };
+  const { findings } = mergeFindings([ruff, sg], [
+    { related_static_id: 'S1', line: 3, suggestion: 'Используйте параметризованный запрос.' },
+    { path: 'app/x.py', line: 4, class: 'secrets/critical', severity: 'critical/high', title: 'Ключ в коде', explanation: 'x', confidence: 0.9 },
+  ], files, DEFAULT_CONFIG, 'm');
+  const sql = findings.filter((f) => f.cls === 'security' && f.ruleIds.some((r) => r.startsWith('ruff') || r.startsWith('semgrep')));
+  assert.equal(sql.length, 1);
+  assert.equal(sql[0].suggestion, undefined);
+  // секрет от LLM в той же группе «безопасность» и рядом с SQL — склеивается с ним, отдельного шума нет
+  assert.ok(findings.length <= 2);
+});

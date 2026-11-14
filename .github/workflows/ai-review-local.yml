@@ -10,7 +10,7 @@ on:
         required: true
       model:
         description: Модель Ollama
-        default: qwen2.5-coder:3b
+        default: qwen2.5-coder:14b
 
 permissions:
   contents: read
@@ -19,7 +19,7 @@ permissions:
 jobs:
   review-local:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: PR
         id: pr
@@ -68,7 +68,7 @@ jobs:
           AI_REVIEW_PRICE_IN: "0"
           AI_REVIEW_PRICE_OUT: "0"
           AI_REVIEW_MAX_INPUT: "5000"
-          AI_REVIEW_MAX_OUTPUT: "1500"
+          AI_REVIEW_MAX_OUTPUT: "1000"
         run: >-
           node reviewer/src/main.ts --dry-run --label " (локальная модель ${{ inputs.model }})"
           --repo-dir . --repo "${{ github.repository }}" --pr "${{ inputs.pr }}"

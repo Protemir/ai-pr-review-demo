@@ -25,6 +25,8 @@ export interface Finding {
   path: string;
   line: number;
   endLine?: number;
+  /** исходная строка, если якорь перенесли к строкам исправления */
+  origLine?: number;
   cls: FindingClass;
   severity: Severity;
   title: string;
