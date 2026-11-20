@@ -10,8 +10,10 @@ def create_app(db_path: str = ":memory:") -> Flask:
     app.teardown_appcontext(close_db)
 
     from .articles import bp as articles_bp
+    from .comments import bp as comments_bp
 
     app.register_blueprint(articles_bp)
+    app.register_blueprint(comments_bp)
     with app.app_context():
         init_db()
     return app

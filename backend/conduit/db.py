@@ -15,6 +15,11 @@ CREATE TABLE IF NOT EXISTS comments (
     body TEXT NOT NULL,
     author TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS sessions (
+    token TEXT PRIMARY KEY,
+    author TEXT NOT NULL,
+    is_admin INTEGER NOT NULL DEFAULT 0
+);
 """
 
 
